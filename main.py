@@ -1,6 +1,7 @@
 import random
 import logging
 from telebot import TeleBot, types
+from telebot.apihelper import ApiTelegramException
 from config import BOT_TOKEN
 from data_base import (
     init_database, save_word, get_random_word,
@@ -17,6 +18,7 @@ bot = TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 init_database()
 
+# Словарь для хранения данных
 data = {}
 
 MENU_BUTTONS = {
@@ -39,22 +41,41 @@ def clean_text(text):
 
 
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
+def send_welcome(obj):
     """Отправляет приветственное сообщение и главное меню"""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(MENU_BUTTONS['STUDY'], MENU_BUTTONS['DICTIONARY'])
-    markup.row(MENU_BUTTONS['ADD_WORD'], MENU_BUTTONS['DELETE_WORD'])
+    try:
+        if isinstance(obj, types.Message):
+            chat_id = obj.chat.id
+            user_id = obj.from_user.id
+        elif isinstance(obj, types.CallbackQuery):
+            chat_id = obj.message.chat.id
+            user_id = obj.from_user.id
+        else:
+            raise ValueError(f"Неподдерживаемый тип объекта: {type(obj)}")
 
-    bot.send_message(
-        message.chat.id,
-        '<b>Добро пожаловать! 🎉</b>\n\n'
-        'Я помогу тебе учить английские слова! 📖\n'
-        'Выбери опцию в меню ниже, чтобы начать.',
-        reply_markup=markup
-    )
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row(MENU_BUTTONS['STUDY'], MENU_BUTTONS['DICTIONARY'])
+        markup.row(MENU_BUTTONS['ADD_WORD'], MENU_BUTTONS['DELETE_WORD'])
 
-    data.pop(message.chat.id, None)
-    logging.info(f"Пользователь {message.from_user.id} открыл главное меню")
+        bot.send_message(
+            chat_id,
+            '<b>Добро пожаловать! 🎉</b>\n\n'
+            'Я помогу тебе учить английские слова! 📖\n'
+            'Выбери опцию в меню ниже, чтобы начать.',
+            reply_markup=markup
+        )
+
+        data.pop(chat_id, None)
+        logging.info(f"Пользователь {user_id} открыл главное меню")
+    except ApiTelegramException as e:
+        logging.error(f"Ошибка при отправке приветственного сообщения: {e}")
+        if "chat not found" in str(e).lower():
+            logging.warning(f"Чат {chat_id} не найден. Возможно, бот заблокирован.")
+        else:
+            bot.send_message(chat_id, '⚠️ Произошла ошибка. Попробуйте снова.')
+    except Exception as e:
+        logging.error(f"Неизвестная ошибка в send_welcome: {e}")
+        bot.send_message(chat_id, '⚠️ Произошла ошибка. Попробуйте снова.')
 
 
 @bot.message_handler(func=lambda m: clean_text(m.text) == MENU_BUTTONS['ADD_WORD'])
@@ -111,26 +132,46 @@ def start_deleting_word(message):
 def handle_delete(call):
     """Обрабатывает удаление слова"""
     try:
+        chat_id = call.message.chat.id
         word_id = int(call.data.split('_')[1])
         if delete_word(call.from_user.id, word_id):
             bot.answer_callback_query(call.id, '✅ Слово удалено!')
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-            bot.send_message(call.message.chat.id, 'Слово успешно удалено!')
+            bot.delete_message(chat_id, call.message.message_id)
+            bot.send_message(chat_id, 'Слово успешно удалено!')
         else:
             bot.answer_callback_query(call.id, '❌ Ошибка при удалении!')
-    except Exception as e:
-        logging.error(f"Ошибка при добавлении слова: {e}")
+            bot.send_message(chat_id, '❌ Ошибка при удалении слова.')
+        send_welcome(call)
+    except ApiTelegramException as e:
+        logging.error(f"Ошибка при удалении слова: {e}")
         bot.answer_callback_query(call.id, '❌ Ошибка при удалении!')
-
-    send_welcome(bot.get_chat(call.message.chat.id))
+        bot.send_message(call.from_user.id, '❌ Произошла ошибка. Попробуйте еще раз.')
+        send_welcome(call)
+    except Exception as e:
+        logging.error(f"Ошибка при удалении слова: {e}")
+        bot.answer_callback_query(call.id, '❌ Ошибка при удалении!')
+        bot.send_message(call.from_user.id, '❌ Произошла ошибка. Попробуйте еще раз.')
+        send_welcome(call)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'cancel_delete')
 def cancel_delete(call):
     """Отменяет удаление слова"""
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    bot.answer_callback_query(call.id)
-    send_welcome(bot.get_chat(call.message.chat.id))
+    try:
+        chat_id = call.message.chat.id
+        bot.delete_message(chat_id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+        send_welcome(call)
+    except ApiTelegramException as e:
+        logging.error(f"Ошибка при отмене удаления: {e}")
+        bot.answer_callback_query(call.id, '❌ Ошибка при отмене!')
+        bot.send_message(call.from_user.id, '❌ Произошла ошибка. Попробуйте еще раз.')
+        send_welcome(call)
+    except Exception as e:
+        logging.error(f"Ошибка при отмене удаления: {e}")
+        bot.answer_callback_query(call.id, '❌ Ошибка при отмене!')
+        bot.send_message(call.from_user.id, '❌ Произошла ошибка. Попробуйте еще раз.')
+        send_welcome(call)
 
 
 @bot.message_handler(func=lambda m: clean_text(m.text) == MENU_BUTTONS['DICTIONARY'])
@@ -147,7 +188,7 @@ def show_user_words(message):
         response += f'• {russian} - {english}\n'
 
     bot.send_message(message.chat.id, response)
-    data.pop(message.chat.id, None)
+    data.pop(message.chat.id, None)  # Очищаем данные
     logging.info(f"Пользователь {message.from_user.id} просмотрел свой словарь")
 
 
@@ -180,6 +221,7 @@ def start_quiz(message):
         reply_markup=markup
     )
 
+    # Сохраняет данные квиза
     data[message.chat.id] = {
         'mode': 'quiz',
         'message_id': sent_message.message_id,
@@ -190,15 +232,14 @@ def start_quiz(message):
     }
 
     logging.info(
-        f"Пользователь {message.from_user.id} начал квиз, слово: {russian}, правильный ответ: {data[message.chat.id]['correct']}, варианты: {cleaned_variants}, raw_variants: {variants}, variants_bytes: {[list(v.encode('utf-8')) for v in cleaned_variants]}")
+        f"Пользователь {message.from_user.id} начал квиз, слово: {russian}, правильный ответ: {data[message.chat.id]['correct']}, варианты: {cleaned_variants}, raw_variants: {variants}")
 
 
 @bot.message_handler(content_types=['text'])
 def check_answer(message):
     """Проверяет ответ в квизе или добавление слова"""
     cleaned_text = clean_text(message.text)
-    logging.info(
-        f"Получен ответ: raw='{repr(message.text)}', cleaned='{cleaned_text}', bytes={list(cleaned_text.encode('utf-8'))}")
+    logging.info(f"Получен ответ: raw='{repr(message.text)}', cleaned='{cleaned_text}'")
 
     if message.chat.id not in data:
         logging.info(f"Нет активного режима для chat_id: {message.chat.id}")
@@ -219,7 +260,7 @@ def check_answer(message):
         message_id = quiz['message_id']
 
         logging.info(
-            f"Проверка ответа в квизе: cleaned_text='{cleaned_text}', bytes={list(cleaned_text.encode('utf-8'))}, correct='{correct}', correct_bytes={list(correct.encode('utf-8'))}, variants={variants}, variants_bytes={[list(v.encode('utf-8')) for v in variants]}, quiz_message_id={message_id}")
+            f"Проверка ответа в квизе: cleaned_text='{cleaned_text}', correct='{correct}', variants={variants}, quiz_message_id={message_id}")
 
         if cleaned_text in [MENU_BUTTONS['MAIN_MENU'], MENU_BUTTONS['CANCEL']]:
             data.pop(message.chat.id, None)
@@ -268,8 +309,7 @@ def check_answer(message):
 def process_new_word(message):
     """Обрабатывает новое слово"""
     cleaned_text = clean_text(message.text)
-    logging.info(
-        f"Обработка добавления слова: raw='{repr(message.text)}', cleaned='{cleaned_text}', bytes={list(cleaned_text.encode('utf-8'))}")
+    logging.info(f"Обработка добавления слова: raw='{repr(message.text)}', cleaned='{cleaned_text}'")
 
     try:
         if '-' not in cleaned_text:
@@ -319,7 +359,7 @@ def handle_other_messages(message):
     """Обрабатывает неизвестные команды"""
     cleaned_text = clean_text(message.text)
     logging.warning(
-        f"Неизвестное сообщение от {message.from_user.id}: raw='{repr(message.text)}', cleaned='{cleaned_text}', bytes={list(cleaned_text.encode('utf-8'))}")
+        f"Неизвестное сообщение от {message.from_user.id}: raw='{repr(message.text)}', cleaned='{cleaned_text}'")
 
     bot.reply_to(message, f'🤔 Неизвестная команда. Используйте кнопки меню:\n'
                           f'• {MENU_BUTTONS["STUDY"]}\n'
