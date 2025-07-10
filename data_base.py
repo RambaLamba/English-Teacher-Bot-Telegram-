@@ -62,7 +62,6 @@ def init_database():
     """Инициализация базы данных"""
     try:
         with db_cursor() as cur:
-            # Создаем таблицы
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -81,20 +80,18 @@ def init_database():
                 )
             """)
 
-            # Создаем уникальный индекс
             cur.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS words_unique 
                 ON words (user_id, russian, english)
             """)
 
-            # Добавляем системного пользователя
             cur.execute("""
                 INSERT INTO users (user_id, username) 
                 VALUES (0, 'system') 
                 ON CONFLICT (user_id) DO NOTHING
             """)
 
-            # Добавляем общие слова
+            # Общие слова
             for rus, eng in DEFAULT_WORDS:
                 cur.execute("""
                     INSERT INTO words (user_id, russian, english)
@@ -112,12 +109,12 @@ def save_word(user_id, russian, english):
     """Сохраняет слово в словарь пользователя"""
     try:
         with db_cursor() as cur:
-            # Добавляем пользователя если его нет
+            # Добавляет пользователя если его нет
             cur.execute(
                 "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
                 (user_id,)
             )
-            # Добавляем слово
+            # Добавляет слово
             cur.execute(
                 """
                 INSERT INTO words (user_id, russian, english) 
